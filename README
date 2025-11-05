@@ -15,6 +15,27 @@ System Setup (Raspberry Pi 5 + RP1 MACB)
 This fork enables the RP1 MACB / Cadence GEM to run in DPDK via UIO.
 You must set up hugepages, bind the NIC to UIO, and load the DMA sync helper.
 
+
+0. Build DPDK (one-time per source update)
+------------------------------------------
+Install prerequisites (Debian/Raspberry Pi OS):
+  sudo apt update
+  sudo apt install -y build-essential meson ninja-build pkg-config \
+                      libnuma-dev python3-pyelftools libpcap-dev libbpf-dev clang
+
+Configure and build (includes testpmd and the matrix-rx example):
+  meson setup build -Dexamples=matrix-rx
+  ninja -C build
+  sudo ninja -C build install
+  sudo ldconfig
+
+Reconfigure an existing build (if you already have ./build):
+  meson configure build -Dexamples=matrix-rx
+  ninja -C build
+
+Clean build:
+  rm -rf build && meson setup build -Dexamples=matrix-rx && ninja -C build
+
 1. Enable Hugepages (one-time)
 --------------------------------
 echo 1024 | sudo tee /proc/sys/vm/nr_hugepages
@@ -97,6 +118,23 @@ echo 1 | sudo tee /sys/bus/platform/devices/$NAME/uio/uio0/enable
 sudo insmod ~/dma-sync-helper/dma_sync_helper.ko
 [ ! -e /dev/dma_sync_eth0 ] && sudo mknod /dev/dma_sync_eth0 c 240 0
 sudo chmod 666 /dev/dma_sync_eth0
+
+
+6. Run Matrix RX App
+---------------------
+cd app/matrix-rx
+sudo ./matrix_rx \
+  --vdev=net_macb0,dev=/dev/uio0,phy_mode=auto \
+  -l 0-1 -n 1 --no-pci
+
+7. Run testpmd (MACB, DMA-sync, Pi5)
+-------------------------------------
+sudo env MACB_RXTX_TRACE=2 ./build/app/dpdk-testpmd \
+  -l 1-2 -n 1 --iova=pa \
+  --huge-dir=/dev/hugepages --socket-mem=64 \
+  --file-prefix=macb3 --no-telemetry --huge-unlink \
+  --vdev='net_macb0,dev=/dev/uio0,phy_lb=0,mac_lb=0,phy_mode=100fd' \
+  -- --interactive --nb-cores=1 --rxd=128 --txd=128 --total-num-mbufs=2048
 
 
 Notes
