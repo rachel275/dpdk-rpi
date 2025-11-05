@@ -9,3 +9,98 @@ API documentation, and sample application information.
 
 For questions and usage discussions, subscribe to: users@dpdk.org
 Report bugs and issues to the development mailing list: dev@dpdk.org
+
+System Setup (Raspberry Pi 5 + RP1 MACB)
+
+This fork enables the RP1 MACB / Cadence GEM to run in DPDK via UIO.
+You must set up hugepages, bind the NIC to UIO, and load the DMA sync helper.
+
+1. Enable Hugepages (one-time)
+--------------------------------
+echo 1024 | sudo tee /proc/sys/vm/nr_hugepages
+
+Persist across boots:
+echo "vm.nr_hugepages=1024" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+
+Check:
+grep Huge /proc/meminfo
+
+
+2. Mount Hugepages (each boot)
+-------------------------------
+sudo mkdir -p /dev/hugepages
+sudo mount -t hugetlbfs nodev /dev/hugepages
+
+Optional /etc/fstab entry:
+nodev /dev/hugepages hugetlbfs defaults 0 0
+
+
+3. Bind RP1 NIC to UIO (each boot)
+-----------------------------------
+This detaches eth0 from Linux. Use another interface or serial for SSH.
+
+Load UIO:
+sudo modprobe uio
+
+Find RP1 MACB device:
+ls /sys/bus/platform/devices | grep -i eth
+
+Bind to UIO (replace NAME if different):
+NAME=fe00a000.ethernet
+
+echo "uio" | sudo tee /sys/bus/platform/devices/$NAME/driver_override
+echo $NAME | sudo tee /sys/bus/platform/drivers/uio/bind
+echo 1 | sudo tee /sys/bus/platform/devices/$NAME/uio/uio0/enable
+
+Check:
+ls /dev/uio*
+
+
+4. DMA Sync Helper (required on Pi 5)
+--------------------------------------
+RP1 is a non-coherent DMA platform — buffers must be synced.
+
+git clone https://github.com/rachel275/dma-sync-helper.git
+cd dma-sync-helper
+make
+
+Load module:
+sudo insmod dma_sync_helper.ko
+
+Create device node (if needed):
+sudo mknod /dev/dma_sync_eth0 c 240 0
+sudo chmod 666 /dev/dma_sync_eth0
+
+Export path (optional):
+export MACB_DMA_SYNC_NODE=/dev/dma_sync_eth0
+
+
+5. Run DPDK App (example)
+--------------------------
+sudo ./build/examples/dpdk-matrix-rx \
+  --vdev=net_macb0,dev=/dev/uio0,phy_mode=auto \
+  -l 0-1 -n 1 --no-pci
+
+
+Quick Bring-Up Script
+----------------------
+sudo mkdir -p /dev/hugepages
+sudo mount -t hugetlbfs nodev /dev/hugepages
+
+sudo modprobe uio
+NAME=$(ls /sys/bus/platform/devices | grep -i eth)
+echo "uio" | sudo tee /sys/bus/platform/devices/$NAME/driver_override
+echo $NAME | sudo tee /sys/bus/platform/drivers/uio/bind
+echo 1 | sudo tee /sys/bus/platform/devices/$NAME/uio/uio0/enable
+
+sudo insmod ~/dma-sync-helper/dma_sync_helper.ko
+[ ! -e /dev/dma_sync_eth0 ] && sudo mknod /dev/dma_sync_eth0 c 240 0
+sudo chmod 666 /dev/dma_sync_eth0
+
+
+Notes
+------
+- After UIO bind, eth0 disappears from Linux networking — expected
+- Must repeat steps 2, 3, 4 after each reboot
+- DMA sync helper strongly recommended for correctness and stability
