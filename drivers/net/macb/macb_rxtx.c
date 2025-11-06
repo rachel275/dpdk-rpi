@@ -14,6 +14,7 @@
 #include "macb_hw.h"
 #include "dma_sync_user.h"
 
+//#include "dma_sync_uapi.h"   /* userspace DMA sync helper ioctl API */
 /* Ensure logtype exists for RTE_LOG(..., PMD, ...) */
 #ifndef RTE_LOGTYPE_PMD
 #define RTE_LOGTYPE_PMD RTE_LOGTYPE_USER1
@@ -52,9 +53,15 @@
  * CTRL.[13:0] = length
  */
 
-#define TX_USED 0x00004000u
-#define TX_WRAP 0x00004000u
-#define TX_LAST 0x00004000u
+#define TX_USED     (1u << 14)   // 1 = free/SW owns
+//#define TX_WRAP     (1u << 30)
+#define TX_LAST     (1u << 15)
+#define TX_LEN_MASK 0x07FFu //on older MACB
+
+//#define TX_LEN_MASK 0x3FFFu     // or 0x07FFu on older MACB
+//#define TX_USED 0x00004000u
+//#define TX_WRAP 0x00004000u
+//#define TX_LAST 0x00004000u
 
 #ifndef NCR_TSTART
 #define NCR_TSTART (1u << 9)
@@ -64,7 +71,6 @@
 #define RTE_LOGTYPE_PMD RTE_LOGTYPE_USER1
 #endif
 #define MACB_DBG(fmt, ...) RTE_LOG(INFO, PMD, "macb: " fmt, ##__VA_ARGS__)
-#endif
 
 #define MABC_RXTX_TRACE 2
 
@@ -147,8 +153,7 @@ void macb_rx_probe_once(struct macb_rxq *rxq) {
              !!(rsr & 0x4));
 }
 
-/* macb_rxtx.c (same file as macb_tx_burst) */
-static void macb_log_regs_full(struct macb_adapter *ad, const char *tag) {
+void macb_log_regs_full(struct macb_adapter *ad, const char *tag) {
     uint32_t ncr = macb_readl(&ad->hw, MACB_NCR);
     uint32_t ncfgr = macb_readl(&ad->hw, MACB_NCFGR);
     uint32_t nsr = macb_readl(&ad->hw, MACB_NSR);
@@ -326,13 +331,6 @@ uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
     /* Early exit if no packets are expected */
     if (unlikely(nb_pkts == 0)) return 0;
 
-    /* Check if RX descriptors are still empty and no valid packets are received */
-    if (unlikely(rxq->cons == rxq->prod)) {
-        // No descriptors to process, likely no packets have arrived
-        RTE_LOG(DEBUG, PMD, "macb: No packets to process (cons == prod)\n");
-        return 0; // No packets to process
-    }
-
     while (nb < nb_pkts) {
         const uint16_t i = rxq->cons;
         volatile struct macb_desc *dv = &rxq->ring[i];
@@ -446,7 +444,7 @@ static inline uint16_t macb_tx_reclaim(struct macb_txq *txq) {
         txq->sw_ring[txq->cons] = NULL;
 
         /* Reset FREE descriptor (USED=1, preserve WRAP), zero addr */
-        const uint32_t wrap = (d->ctrl & TX_WRAP);
+        const uint32_t wrap = (d->ctrl); // & TX_WRAP);
         d->addr = 0;
         d->ctrl = (TX_USED | wrap);
 
@@ -481,7 +479,8 @@ uint16_t macb_tx_burst(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pk
 
         sync_desc_from_dev(txq->sync_fd, d, sizeof(*d));
         uint32_t ctrl = d->ctrl;
-        RTE_LOG(INFO, PMD, "macb TX[reclaim] ctrl=0x%08x, TXUSED=0x%08x \n", ctrl, TX_USED);
+	bool done = (ctrl & TX_USED) != 0;
+        RTE_LOG(INFO, PMD, "macb TX[reclaim] ctrl=0x%08x, TXUSED=%d \n", ctrl, (int)done);
         if ((ctrl & TX_USED) == 0) break;
 
         if (txq->sw_ring[cons]) {
@@ -490,12 +489,12 @@ uint16_t macb_tx_burst(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pk
         }
 
         /* keep WRAP; mark FREE */
-        d->ctrl = (ctrl & TX_WRAP) | TX_USED;
+        d->ctrl = (ctrl) | TX_USED; // & TX_WRAP) | TX_USED;
         sync_desc_to_dev(txq->sync_fd, d, sizeof(*d));
 
 #if MACB_RXTX_TRACE >= 2
         RTE_LOG(INFO, PMD, "macb: TX[reclaim] d%03u: ctrl=0x%08x (USED=1 WRAP=%d)\n", cons, ctrl,
-                !!(ctrl & TX_WRAP));
+                !!(ctrl)); // & TX_WRAP));
 #endif
         if (++cons == nb_desc) cons = 0;
     }
@@ -520,9 +519,13 @@ uint16_t macb_tx_burst(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pk
         struct macb_desc *d = (struct macb_desc *)(uintptr_t)dv;
 
         d->addr = (uint32_t)BUS_IOVA(biova);
+	
+	rte_wmb();
+	rte_io_wmb();
+
 
         uint32_t ctrl = ((uint32_t)len & TX_LEN_MASK) | TX_LAST;
-        if (prod == (nb_desc - 1)) ctrl |= TX_WRAP;
+        if (prod == (nb_desc - 1)) ctrl; // |= TX_WRAP;
         /* Hand to HW: ensure USED bit (31) is 0 */
         d->ctrl = ctrl; /* bit31 implicitly 0 */
 
@@ -531,6 +534,10 @@ uint16_t macb_tx_burst(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pk
         /* cache maintenance (non-coherent) */
         sync_buf_to_dev(txq->sync_fd, rte_pktmbuf_mtod(m, void *), len);
         sync_desc_to_dev(txq->sync_fd, d, sizeof(*d));
+	
+	rte_wmb();
+	rte_io_wmb();
+
         RTE_LOG(INFO, PMD, "TX[publish] addr=0x%08x ctrl=0x%08x\n", d->addr, d->ctrl);
 
 #if MACB_RXTX_TRACE >= 2
@@ -538,7 +545,7 @@ uint16_t macb_tx_burst(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pk
         sync_desc_from_dev(txq->sync_fd, d, sizeof(*d));
         memcpy(&chk, (const void *)d, sizeof(chk));
         RTE_LOG(INFO, PMD, "macb: TX[pub-check] d%03u: addr=0x%08x ctrl=0x%08x (LEN=%u WRAP=%d)\n",
-                prod, chk.addr, chk.ctrl, (chk.ctrl & TX_LEN_MASK), !!(chk.ctrl & TX_WRAP));
+                prod, chk.addr, chk.ctrl, (chk.ctrl & TX_LEN_MASK), !!(chk.ctrl)); // & TX_WRAP));
 #endif
         if (++prod == nb_desc) prod = 0;
     }
@@ -565,7 +572,7 @@ uint16_t macb_tx_burst(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pk
 
             RTE_LOG(INFO, PMD,
                     "macb: TX[pub-check] d%03u: addr=0x%08x ctrl=0x%08x (LEN=%u WRAP=%d)\n", idx,
-                    chk.addr, chk.ctrl, (chk.ctrl & TX_LEN_MASK), !!(chk.ctrl & TX_WRAP));
+                    chk.addr, chk.ctrl, (chk.ctrl & TX_LEN_MASK), !!(chk.ctrl)); // & TX_WRAP));
         }
     }
 #endif

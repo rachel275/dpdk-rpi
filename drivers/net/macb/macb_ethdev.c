@@ -312,6 +312,7 @@ static void macb_dma_sync_open_once(struct macb_adapter *ad)
     }
 }
 
+
 /* TX ring helpers */
 static void macb_tx_force_free(struct macb_txq *txq)
 {
@@ -325,7 +326,7 @@ static void macb_tx_force_free(struct macb_txq *txq)
         sync_desc_to_dev(txq->sync_fd, &txq->ring[i], sizeof(txq->ring[i]));
 
         // Print the IOVA of the TX descriptor
-        RTE_LOG(INFO, PMD, "TX[%u] descriptor[%u]: IOVA = 0x%" PRIx64 "\n", 0, i, txq->ring[i].addr);
+        RTE_LOG(INFO, PMD, "TX[%u] descriptor[%u]: IOVA = 0x%" PRIx32 "\n", 0, i, txq->ring[i].addr);
     }
     sync_desc_to_dev(txq->sync_fd, txq->ring, nb * sizeof(txq->ring[0]));
     rte_io_wmb();
@@ -566,6 +567,8 @@ static void macb_apply_loopback(struct macb_adapter *ad)
     macb_mac_loopback_set(ad, g_mac_lb ? 1 : 0);
 }
 
+void macb_rx_probe_once(struct macb_rxq *rxq);
+void macb_log_regs_full(struct macb_adapter *ad, const char *tag);
 /* -------- Ethdev ops decl -------- */
 static int macb_dev_configure(struct rte_eth_dev *dev);
 static int macb_dev_start(struct rte_eth_dev *dev);
@@ -678,6 +681,7 @@ static int macb_rx_queue_setup(struct rte_eth_dev *dev, uint16_t qid,
     rxq->port_id   = dev->data->port_id;
     rxq->sw_ring   = rte_zmalloc_socket("macb_rx_sw", nb_desc * sizeof(struct rte_mbuf *),
                                         RTE_CACHE_LINE_SIZE, rte_socket_id());
+    rxq->data_room_bytes = (uint16_t)(rte_pktmbuf_data_room_size(mp) - RTE_PKTMBUF_HEADROOM);
     if (!rxq->sw_ring) return -ENOMEM;
     memset(rxq->ring, 0, nb_desc * sizeof(struct macb_desc));
     macb_rx_init(rxq);
@@ -757,6 +761,104 @@ static int macb_tx_queue_stop(struct rte_eth_dev *dev, uint16_t qid){
     return 0;
 }
 
+/* Read back primary station address (SA1) for MACB or GEM */
+static inline void macb_dbg_sa(struct macb_hw *hw)
+{
+#if defined(MACB_SA1L) && defined(MACB_SA1H)
+    uint32_t sa1l = macb_readl(hw, MACB_SA1L);
+    uint32_t sa1h = macb_readl(hw, MACB_SA1H);
+    uint8_t mac0 = (sa1l >>  0) & 0xff;
+    uint8_t mac1 = (sa1l >>  8) & 0xff;
+    uint8_t mac2 = (sa1l >> 16) & 0xff;
+    uint8_t mac3 = (sa1l >> 24) & 0xff;
+    uint8_t mac4 = (sa1h >>  0) & 0xff;
+    uint8_t mac5 = (sa1h >>  8) & 0xff;
+    RTE_LOG(INFO, PMD,
+        "macb: SA1 now=%02x:%02x:%02x:%02x:%02x:%02x (SA1H=0x%08x SA1L=0x%08x)\n",
+        mac0, mac1, mac2, mac3, mac4, mac5, sa1h, sa1l);
+
+#elif defined(GEM_SA1B) && defined(GEM_SA1T)
+    /* GEM naming: SA1B = bottom 32 bits, SA1T = top 16 bits */
+    uint32_t sa1b = macb_readl(hw, GEM_SA1B);
+    uint32_t sa1t = macb_readl(hw, GEM_SA1T);
+    uint8_t mac0 = (sa1b >>  0) & 0xff;
+    uint8_t mac1 = (sa1b >>  8) & 0xff;
+    uint8_t mac2 = (sa1b >> 16) & 0xff;
+    uint8_t mac3 = (sa1b >> 24) & 0xff;
+    uint8_t mac4 = (sa1t >>  0) & 0xff;
+    uint8_t mac5 = (sa1t >>  8) & 0xff;
+    RTE_LOG(INFO, PMD,
+        "macb: SA1 now=%02x:%02x:%02x:%02x:%02x:%02x (SA1T=0x%08x SA1B=0x%08x)\n",
+        mac0, mac1, mac2, mac3, mac4, mac5, sa1t, sa1b);
+#else
+    RTE_LOG(INFO, PMD, "macb: SA1 regs not present on this IP (no SA1L/H or SA1B/T macros)\n");
+#endif
+}
+
+static void macb_hw_set_sa0(struct macb_adapter *ad, const struct rte_ether_addr *ea)
+{
+    uint32_t sa_low  =
+        ((uint32_t)ea->addr_bytes[3]      ) |
+        ((uint32_t)ea->addr_bytes[2] <<  8) |
+        ((uint32_t)ea->addr_bytes[1] << 16) |
+        ((uint32_t)ea->addr_bytes[0] << 24);
+    uint32_t sa_high =
+        ((uint32_t)ea->addr_bytes[5] << 16) |
+        ((uint32_t)ea->addr_bytes[4] << 24);
+
+#ifdef MACB_SA0L
+    macb_writel(&ad->hw, MACB_SA0L, sa_low);
+    macb_writel(&ad->hw, MACB_SA0H, sa_high);
+#elif defined(MACB_SA1L)
+    macb_writel(&ad->hw, MACB_SA1L, sa_low);
+    macb_writel(&ad->hw, MACB_SA1H, sa_high);
+#elif defined(MACB_SAB) && defined(MACB_SAT)
+    /* Some MACB/GEM expose SAB/SAT for index 0 */
+    macb_writel(&ad->hw, MACB_SAB, sa_low);
+    macb_writel(&ad->hw, MACB_SAT, sa_high);
+#else
+#   warning "No known SA0 register pair for this IP – forcing CAF"
+    /* If truly no SA regs: leave promisc always-on */
+    uint32_t n = macb_readl(&ad->hw, MACB_NCFGR);
+    n |= MACB_NCFGR_CAF;
+    macb_writel(&ad->hw, MACB_NCFGR, n);
+    ad->promisc = 1;
+#endif
+}
+
+
+/* Program primary station address (optional) */
+static inline void macb_program_sa1(struct macb_adapter *ad,
+                                    const struct rte_ether_addr *ea)
+{
+#if defined(MACB_SA1L) && defined(MACB_SA1H)
+    uint32_t sa1l =  ((uint32_t)ea->addr_bytes[0]      ) |
+                     ((uint32_t)ea->addr_bytes[1] <<  8) |
+                     ((uint32_t)ea->addr_bytes[2] << 16) |
+                     ((uint32_t)ea->addr_bytes[3] << 24);
+    uint32_t sa1h =  ((uint32_t)ea->addr_bytes[4]      ) |
+                     ((uint32_t)ea->addr_bytes[5] <<  8);
+    macb_writel(&ad->hw, MACB_SA1L, sa1l);
+    macb_writel(&ad->hw, MACB_SA1H, sa1h);
+    rte_io_wmb();
+    macb_dbg_sa(&ad->hw);
+
+#elif defined(GEM_SA1B) && defined(GEM_SA1T)
+    uint32_t sa1b =  ((uint32_t)ea->addr_bytes[0]      ) |
+                     ((uint32_t)ea->addr_bytes[1] <<  8) |
+                     ((uint32_t)ea->addr_bytes[2] << 16) |
+                     ((uint32_t)ea->addr_bytes[3] << 24);
+    uint32_t sa1t =  ((uint32_t)ea->addr_bytes[4]      ) |
+                     ((uint32_t)ea->addr_bytes[5] <<  8);
+    macb_writel(&ad->hw, GEM_SA1B, sa1b);
+    macb_writel(&ad->hw, GEM_SA1T, sa1t);
+    rte_io_wmb();
+    macb_dbg_sa(&ad->hw);
+#else
+    RTE_LOG(INFO, PMD, "macb: cannot program SA1 (no SA1 regs on this IP)\n");
+#endif
+}
+
 /* -------- Promisc / link -------- */
 int macb_promiscuous_enable(struct rte_eth_dev *dev)
 {
@@ -767,6 +869,7 @@ int macb_promiscuous_enable(struct rte_eth_dev *dev)
     n &= ~NCFGR_NBC;
 #endif
     macb_writel(&ad->hw, MACB_NCFGR, n);
+    macb_dbg_sa(&ad->hw);
     (void)macb_readl(&ad->hw, MACB_NCFGR);
     return 0;
 }
@@ -809,6 +912,7 @@ int macb_promiscuous_disable(struct rte_eth_dev *dev)
 
 /* Only the speed/duplex bits are managed here */
 #define NCFGR_SPEED_MASK   (NCFGR_SPD | NCFGR_FD | GEM_NCFGR_GBE)
+
 
 static int macb_link_update(struct rte_eth_dev *dev, int wait)
 {
@@ -974,7 +1078,7 @@ static void macb_dump_first_rx_descs(struct macb_rxq *rxq, const char *tag)
 
 static void macb_dump_first_tx_descs(struct macb_txq *txq, const char *tag)
 {
-    for (int i = 0; i < 4 && i < txq->nb_desc; ++i++) {
+    for (int i = 0; i < 4 && i < txq->nb_desc; i++) {
         struct macb_desc *d = &txq->ring[i];
         uint32_t a = d->addr, c = d->ctrl;
         RTE_LOG(INFO, PMD,
@@ -983,45 +1087,61 @@ static void macb_dump_first_tx_descs(struct macb_txq *txq, const char *tag)
     }
 }
 
-/* After RBQP/TBQP are written, before enabling RX/TX */
-static inline uint16_t macb_rxbuf_bytes(struct macb_adapter *ad)
+static inline uint32_t macb_rxbuf_bytes(const struct macb_rxq *rxq)
 {
-    /* Use the actual data room, not full mbuf size, and clamp to hw granularity */
-    const uint32_t room = rte_pktmbuf_data_room_size(ad->mb_pool) - RTE_PKTMBUF_HEADROOM;
-    /* GEM expects (RBSZ = (bytes / 64) - 1). Round down to 64B, minimum 64B. */
-    uint32_t sz = RTE_ALIGN_FLOOR(room, 64);
-    if (sz < 64) sz = 64;
-    return (uint16_t)sz;
+    /* match what DPDK will actually allocate for RX data */
+    uint32_t room = rte_pktmbuf_data_room_size(rxq->mp) - RTE_PKTMBUF_HEADROOM;
+    /* Gem can handle up to 12k etc., but clamp to 64..16320 if you like */
+    if (room < 64) room = 64;
+    return room;
 }
 
-static void macb_program_rxbufsz(struct macb_adapter *ad)
+static inline uint32_t macb_rxbs_units64(const struct macb_rxq *rxq)
 {
-#ifdef GEM_DMACFG
-    /* Only present on Cadence GEM variants */
-    uint32_t dmacfg = macb_readl(&ad->hw, GEM_DMACFG);
+    return macb_rxbuf_bytes(rxq) / 64;   /* hardware expects 64-byte units */
+}
 
-# ifdef GEM_DMACFG_RXBUF_Msk
-    const uint32_t rx_bytes = macb_rxbuf_bytes(ad);
-    const uint32_t rbsz = (rx_bytes / 64) - 1;      /* HW encoding */
-    dmacfg &= ~GEM_DMACFG_RXBUF_Msk;
-#  ifdef GEM_DMACFG_RXBUF
-    dmacfg |= GEM_DMACFG_RXBUF(rbsz);
-#  else
-    dmacfg |= (rbsz << GEM_DMACFG_RXBUF_Pos);
-#  endif
-    macb_writel(&ad->hw, GEM_DMACFG, dmacfg);
-    MACB_DBG("DMACFG=0x%08x (RXBUF=%u bytes)\n", dmacfg, rx_bytes);
-# else
-    const uint32_t rx_bytes = macb_rxbuf_bytes(ad);
-    const uint32_t rbsz = (rx_bytes / 64) - 1;
-    dmacfg &= ~(0x7Fu << 16);              /* TODO: replace with correct mask */
-    dmacfg |=  (rbsz & 0x7Fu) << 16;       /* TODO: replace with correct shift */
-    macb_writel(&ad->hw, GEM_DMACFG, dmacfg);
-    MACB_DBG("DMACFG(guess)=0x%08x (RXBUF=%u bytes)\n", dmacfg, rx_bytes);
-# endif /* GEM_DMACFG_RXBUF_Msk */
+/* Program GEM/MACB DMA Receive Buffer Size (DRBS) from mbuf data room. */
+static void macb_program_rxbs(struct macb_adapter *ad, const struct macb_rxq *rxq)
+{
+    /* Prefer the value captured at queue setup; otherwise compute from the mp. */
+    uint32_t room = rxq->data_room_bytes;
+    if (room == 0) {
+        uint32_t r = rte_pktmbuf_data_room_size(rxq->mp) - RTE_PKTMBUF_HEADROOM;
+        room = r;
+    }
+
+    /* DRBS is in 64-byte units. Guard and clamp. */
+    uint32_t units = room / 64u;
+    if (units == 0)
+        units = 1;              /* HW minimum */
+    if (units > 0xFFu)
+        units = 0xFFu;          /* field is typically 8 bits; clamp conservatively */
+
+#ifdef GEM_DMACFG_DRBS_MASK
+    /* Only touch the register if we know the field layout for this SoC. */
+    uint32_t before = macb_readl(&ad->hw, GEM_DMACFG);
+    uint32_t after  = before;
+
+    after &= ~GEM_DMACFG_DRBS_MASK;
+    after |= (units << GEM_DMACFG_DRBS_SHIFT) & GEM_DMACFG_DRBS_MASK;
+
+    RTE_LOG(INFO, PMD,
+        "macb: RX buffer room=%u bytes -> DRBS=%u (x64B). DMACCFG %08x -> %08x\n",
+        room, units, before, after);
+
+    macb_writel(&ad->hw, GEM_DMACFG, after);
+    rte_io_wmb();
+
+    /* Read back for sanity. */
+    uint32_t verify = macb_readl(&ad->hw, GEM_DMACFG);
+    RTE_LOG(INFO, PMD, "macb: DMACCFG now=%08x (post-DRBS)\n", verify);
 #else
-    /* Plain MACB has no RX buffer size field — nothing to do. */
-    RTE_SET_USED(ad);
+    /* Safe fallback if we don't know this variant’s DRBS bitfield. */
+    RTE_LOG(WARNING, PMD,
+        "macb: DRBS not programmed (no GEM_DMACFG_DRBS_* macros for this SoC). "
+        "room=%u bytes -> %u units (skipped)\n",
+        room, units);
 #endif
 }
 
@@ -1048,20 +1168,18 @@ static int macb_dev_start(struct rte_eth_dev *dev)
     macb_writel(&ad->hw, MACB_TSR, 0xffffffffu);
 #endif
 
-    //uint64_t probed = macb_calc_bus_ofs_from_tbqp(ad, txq);
-    //if ((int64_t)probed != (int64_t)g_bus_ofs) {
-    //    RTE_LOG(INFO, PMD, "macb: bus_ofs corrected: 0x%llx -> 0x%llx\n",
-    //            (unsigned long long)g_bus_ofs, (unsigned long long)probed);
-    //    g_bus_ofs = probed;
-    //}
-    /* Recompute ring base IOVAs *after* any correction */
+    /* Recompute ring base IOVAs (if bus_ofs were adjusted earlier) */
     uint64_t rb = BUS_IOVA(rxq->ring_iova);
     uint64_t tb = BUS_IOVA(txq->ring_iova);
 
     /* Program ring bases, then fence */
+#ifdef MACB_RBQPH
     macb_writel(&ad->hw, MACB_RBQPH, (uint32_t)(rb >> 32));
+#endif
     macb_writel(&ad->hw, MACB_RBQP,  (uint32_t)(rb & 0xffffffffu));
+#ifdef MACB_TBQPH
     macb_writel(&ad->hw, MACB_TBQPH, (uint32_t)(tb >> 32));
+#endif
     macb_writel(&ad->hw, MACB_TBQP,  (uint32_t)(tb & 0xffffffffu));
 #ifdef GEM_TBQB_Q0
     macb_writel(&ad->hw, GEM_TBQB_Q0, (uint32_t)(tb & 0xffffffffu));
@@ -1077,6 +1195,7 @@ static int macb_dev_start(struct rte_eth_dev *dev)
     for (uint16_t i = 0; i < txq->nb_desc; i++)
         sync_desc_to_dev(txq->sync_fd, &txq->ring[i], sizeof(txq->ring[i]));
 
+    /* Ensure RX descriptors are HW-owned before RXEN */
     for (uint16_t i = 0; i < rxq->nb_desc; i++) {
         volatile struct macb_desc *d = &rxq->ring[i];
         sync_desc_from_dev(rxq->sync_fd, (const void *)d, sizeof(*d));
@@ -1090,11 +1209,50 @@ static int macb_dev_start(struct rte_eth_dev *dev)
         }
     }
 
+    /* map mempool DMA segments once we know mp */
     if (ad->rxq[0].mp)
         macb_map_mempool(dev->device, ad->rxq[0].mp);
 
     macb_dump_first_rx_descs(rxq, "pre-enable");
     macb_tx_dump_head(txq, "pre-enable", 4);
+
+    /* === Program GEM DMACFG.RXBS (Receive Buffer Size in 64B units) === */
+#if defined(GEM_DMACFG) && defined(GEM_DMACFG_RXBS_MASK) && defined(GEM_DMACFG_RXBS_SHIFT)
+    {
+        const uint16_t room = rxq->data_room_bytes;         /* e.g. 2048 */
+        uint32_t units64 = room / 64u;
+        if (units64 > 0xFFu) units64 = 0xFFu;
+
+        uint32_t dmacfg_before = macb_readl(&ad->hw, GEM_DMACFG);
+        uint32_t dmacfg_after  = (dmacfg_before & ~GEM_DMACFG_RXBS_MASK) |
+                                  (((uint32_t)units64 & 0xFFu) << GEM_DMACFG_RXBS_SHIFT);
+
+        RTE_LOG(INFO, PMD,
+            "macb: DMACFG RXBS program: room=%u bytes -> units64=%u\n",
+            (unsigned)room, (unsigned)units64);
+        RTE_LOG(INFO, PMD,
+            "macb: DMACFG before=0x%08x, after=0x%08x (RXBS=%u @[%u:+8])\n",
+            dmacfg_before, dmacfg_after, (unsigned)units64,
+            (unsigned)GEM_DMACFG_RXBS_SHIFT);
+
+        macb_writel(&ad->hw, GEM_DMACFG, dmacfg_after);
+        rte_io_wmb();
+
+        /* Optional readback/log */
+        uint32_t verify = macb_readl(&ad->hw, GEM_DMACFG);
+        RTE_LOG(INFO, PMD,
+            "macb: DMACFG readback=0x%08x (RXBS=%u)\n",
+            verify, (unsigned)((verify & GEM_DMACFG_RXBS_MASK) >> GEM_DMACFG_RXBS_SHIFT));
+    }
+#else
+    {
+        const uint16_t room = rxq->data_room_bytes;
+        const uint32_t units64 = (uint32_t)(room / 64u);
+        RTE_LOG(INFO, PMD,
+            "macb: DRBS not programmed (no GEM_DMACFG_* macros for this SoC). room=%u bytes -> %u units (skipped)\n",
+            (unsigned)room, (unsigned)units64);
+    }
+#endif /* DMACFG */
 
     /* PHY config */
     if (g_phy_mode == PHY_MODE_AUTO)
@@ -1111,23 +1269,24 @@ static int macb_dev_start(struct rte_eth_dev *dev)
     n &= ~NCFGR_NBC;
 #endif
     macb_writel(&ad->hw, MACB_NCFGR, n);
-
+    macb_dbg_sa(&ad->hw);
     macb_force_promisc_allow_bcast(ad);
-    /* Program Tx ring base again before enable */
-    ncr = macb_readl(&ad->hw, MACB_NCR);
+    macb_dbg_sa(&ad->hw);
+    
+    /* Program Tx ring base again before enable (some variants want this) */
 #ifdef MACB_TBQPH
     macb_writel(&ad->hw, MACB_TBQPH, (uint32_t)(tb >> 32));
 #endif
     macb_writel(&ad->hw, MACB_TBQP,  (uint32_t)tb);
     rte_io_wmb();
 
-    macb_program_rxbufsz(ad);
-
     /* ******** FINAL FENCE BEFORE RXEN ******** */
     rte_io_wmb();
 
+    ncr = macb_readl(&ad->hw, MACB_NCR);
     ncr |= NCR_RXEN | NCR_TXEN | NCR_MPE;
     macb_writel(&ad->hw, MACB_NCR, ncr);
+    macb_log_regs_full(ad, "pre-enable");
 
     macb_apply_loopback(ad);
     {
@@ -1137,11 +1296,19 @@ static int macb_dev_start(struct rte_eth_dev *dev)
             ncrv, !!(ncrv & NCR_LB), !!(ncrv & NCR_RXEN), !!(ncrv & NCR_TXEN), ncf);
     }
     rte_io_wmb();
-
+    macb_log_regs_full(ad, "post-enable");
+    struct macb_rxq *rxq0 = dev->data->rx_queues[0];
+    if (rxq0) {
+        macb_rx_probe_once(rxq0);
+    }
     /* Lightweight RX probe after enable */
     volatile struct macb_desc *d0 = &rxq->ring[0];
     volatile struct macb_desc *d1 = &rxq->ring[1];
+#ifdef MACB_RBQPH
     uint32_t rph = macb_readl(&ad->hw, MACB_RBQPH);
+#else
+    uint32_t rph = 0;
+#endif
     uint32_t rpl = macb_readl(&ad->hw, MACB_RBQP);
     MACB_DBG("RBQP read=0x%08x, expected ring_iova=0x%08x\n",
          rpl, (uint32_t)rxq->ring_iova);
@@ -1169,6 +1336,7 @@ static int macb_dev_start(struct rte_eth_dev *dev)
 
     return 0;
 }
+
 
 static int macb_dev_stop(struct rte_eth_dev *dev)
 {
@@ -1212,6 +1380,7 @@ static int macb_mac_addr_set(struct rte_eth_dev *dev, struct rte_ether_addr *ea)
 {
     struct macb_adapter *ad = dev->data->dev_private;
     rte_ether_addr_copy(ea, &dev->data->mac_addrs[0]);
+    macb_hw_set_sa0(ad, ea);
     macb_hw_write_mac(ad, ea);
     return 0;
 }

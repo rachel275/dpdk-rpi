@@ -88,6 +88,20 @@
 # define MACB_RSR   0x0020
 #endif
 
+/* GEM DMA Configuration register + RX Buffer Size field (common GEM layout) */
+#ifndef GEM_DMACFG
+#define GEM_DMACFG               0x0030u
+#endif
+#ifndef GEM_DMACFG_RXBS_SHIFT
+#define GEM_DMACFG_RXBS_SHIFT    16
+#endif
+#ifndef GEM_DMACFG_RXBS_MASK
+#define GEM_DMACFG_RXBS_MASK     (0xFFu << GEM_DMACFG_RXBS_SHIFT)
+#endif
+/* Helper: build RXBS field from 64-byte units */
+#ifndef GEM_DMACFG_RXBS
+#define GEM_DMACFG_RXBS(units64) (((uint32_t)(units64) & 0xFFu) << GEM_DMACFG_RXBS_SHIFT)
+#endif
 
 /* Helpful accessor */
 static inline uint16_t macb_rx_len(uint32_t ctrl)
@@ -125,6 +139,7 @@ struct macb_rxq {
     int sync_fd;
     struct macb_adapter *ad;
     uint16_t port_id;
+    uint16_t data_room_bytes;
 };
 
 struct macb_txq {
