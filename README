@@ -12,133 +12,385 @@ Report bugs and issues to the development mailing list: dev@dpdk.org
 
 System Setup (Raspberry Pi 5 + RP1 MACB)
 
-This fork enables the RP1 MACB / Cadence GEM to run in DPDK via UIO.
-You must set up hugepages, bind the NIC to UIO, and load the DMA sync helper.
+This fork enables the Raspberry Pi 5 RP1 Ethernet controller (Cadence MACB/GEM) to run as a DPDK Poll Mode Driver (PMD) using a UIO-backed userspace driver.
 
+Unlike conventional DPDK NIC drivers, this PMD does **not** use PCI device discovery. Instead, the RP1 Ethernet platform device is detached from the Linux networking stack, rebound to `uio_pdrv_genirq`, and then accessed through `/dev/uio0` by the DPDK MACB vdev.
 
-0. Build DPDK (one-time per source update)
-------------------------------------------
-Install prerequisites (Debian/Raspberry Pi OS):
-  sudo apt update
-  sudo apt install -y build-essential meson ninja-build pkg-config \
-                      libnuma-dev python3-pyelftools libpcap-dev libbpf-dev clang
+The DMA sync helper is also required on Raspberry Pi 5 to ensure cache coherency between DMA operations and CPU access.
 
-Configure and build (includes testpmd and the matrix-rx example):
-  meson setup build -Dexamples=matrix-rx
-  ninja -C build
-  sudo ninja -C build install
-  sudo ldconfig
+---
 
-Reconfigure an existing build (if you already have ./build):
-  meson configure build -Dexamples=matrix-rx
-  ninja -C build
+# Architecture
+
+```text
+Linux Ethernet Driver (eth0)
+            │
+            ▼
+    Unbind platform device
+            │
+            ▼
+     uio_pdrv_genirq
+            │
+            ▼
+         /dev/uio0
+            │
+            ▼
+      DPDK net_macb PMD
+            │
+            ▼
+   RP1 MACB/GEM Hardware
+```
+
+The PMD is instantiated as a DPDK virtual device:
+
+```bash
+--vdev=net_macb0,dev=/dev/uio0
+```
+
+# 0. Build DPDK
+
+Install dependencies:
+
+```bash
+sudo apt update
+
+sudo apt install -y \
+    build-essential \
+    meson \
+    ninja-build \
+    pkg-config \
+    libnuma-dev \
+    python3-pyelftools \
+    libpcap-dev \
+    libbpf-dev \
+    clang
+```
+
+Configure and build:
+
+```bash
+meson setup build -Dexamples=matrix-rx
+ninja -C build
+sudo ninja -C build install
+sudo ldconfig
+```
+
+Reconfigure:
+
+```bash
+meson configure build -Dexamples=matrix-rx
+ninja -C build
+```
 
 Clean build:
-  rm -rf build && meson setup build -Dexamples=matrix-rx && ninja -C build
 
-1. Enable Hugepages (one-time)
---------------------------------
+```bash
+rm -rf build
+meson setup build -Dexamples=matrix-rx
+ninja -C build
+```
+
+---
+
+# 1. Configure Hugepages
+
+DPDK requires hugepage-backed memory for packet buffers and DMA allocations.
+
+Allocate hugepages:
+
+```bash
 echo 1024 | sudo tee /proc/sys/vm/nr_hugepages
+```
 
-Persist across boots:
+Persist across reboots:
+
+```bash
 echo "vm.nr_hugepages=1024" | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
+```
 
-Check:
+Verify:
+
+```bash
 grep Huge /proc/meminfo
+```
 
+Example:
 
-2. Mount Hugepages (each boot)
--------------------------------
+```text
+HugePages_Total: 205
+```
+
+The exact number may be lower than requested depending on available memory.
+
+---
+
+# 2. Mount Hugepages
+
+After every reboot:
+
+```bash
 sudo mkdir -p /dev/hugepages
 sudo mount -t hugetlbfs nodev /dev/hugepages
+```
 
-Optional /etc/fstab entry:
+Optional `/etc/fstab` entry:
+
+```text
 nodev /dev/hugepages hugetlbfs defaults 0 0
+```
 
+Verify:
 
-3. Bind RP1 NIC to UIO (each boot)
------------------------------------
-This detaches eth0 from Linux. Use another interface or serial for SSH.
+```bash
+mount | grep huge
+```
 
-Load UIO:
+---
+
+# 3. Determine the Ethernet Platform Device
+
+Different Pi firmware and kernel versions may expose different names.
+Determine the correct device dynamically:
+
+```bash
+NAME=$(basename "$(readlink /sys/class/net/eth0/device)")
+echo $NAME
+```
+
+Example:
+
+```text
+1f00100000.ethernet
+```
+
+---
+
+# 4. Detach eth0 from Linux
+
+If connected via SSH over eth0, you will lose connectivity.
+
+Bring the interface down:
+
+```bash
+sudo ip link set eth0 down
+```
+
+Check the current driver:
+
+```bash
+readlink /sys/bus/platform/devices/$NAME/driver
+```
+
+Unbind the Linux driver:
+
+```bash
+echo $NAME | sudo tee \
+    /sys/bus/platform/devices/$NAME/driver/unbind
+```
+
+After this step, eth0 will no longer appear as a normal Linux network interface.
+
+---
+
+# 5. Bind the Device to UIO
+
+Load UIO support:
+
+```bash
 sudo modprobe uio
+sudo modprobe uio_pdrv_genirq
+```
 
-Find RP1 MACB device:
-ls /sys/bus/platform/devices | grep -i eth
+Override the driver:
 
-Bind to UIO (replace NAME if different):
-NAME=fe00a000.ethernet
+```bash
+echo uio_pdrv_genirq | sudo tee \
+    /sys/bus/platform/devices/$NAME/driver_override
+```
 
-echo "uio" | sudo tee /sys/bus/platform/devices/$NAME/driver_override
-echo $NAME | sudo tee /sys/bus/platform/drivers/uio/bind
-echo 1 | sudo tee /sys/bus/platform/devices/$NAME/uio/uio0/enable
+Bind:
 
-Check:
-ls /dev/uio*
+```bash
+echo $NAME | sudo tee \
+    /sys/bus/platform/drivers/uio_pdrv_genirq/bind
+```
 
+Expected behaviour:
 
-4. DMA Sync Helper (required on Pi 5)
---------------------------------------
-RP1 is a non-coherent DMA platform — buffers must be synced.
+```text
+1f00100000.ethernet
+```
 
+The command should return immediately.
+
+Verify:
+
+```bash
+ls -l /dev/uio*
+```
+
+Expected:
+
+```text
+/dev/uio0
+```
+
+Confirm ownership:
+
+```bash
+readlink /sys/bus/platform/devices/$NAME/driver
+```
+
+Expected:
+
+```text
+/sys/bus/platform/drivers/uio_pdrv_genirq
+```
+
+If the bind hangs indefinitely, collect:
+
+```bash
+dmesg -w
+```
+
+in another terminal before attempting the bind.
+
+---
+
+# 6. DMA Sync Helper (Required)
+
+RP1 DMA is not cache coherent with CPU caches.
+
+The DMA sync helper exposes Linux DMA cache-synchronisation primitives to userspace and is required for correct operation.
+
+Clone:
+
+```bash
 git clone https://github.com/rachel275/dma-sync-helper.git
 cd dma-sync-helper
 make
+```
 
-Load module:
+Load:
+
+```bash
 sudo insmod dma_sync_helper.ko
+```
 
-Create device node (if needed):
-sudo mknod /dev/dma_sync_eth0 c 240 0
+Check dmesg for the allocated device major number:
+
+```bash
+dmesg | tail
+```
+
+Create device node if required:
+
+```bash
+sudo mknod /dev/dma_sync_eth0 c <major> 0
 sudo chmod 666 /dev/dma_sync_eth0
+```
 
-Export path (optional):
+Optional:
+
+```bash
 export MACB_DMA_SYNC_NODE=/dev/dma_sync_eth0
+```
 
+---
 
-5. Run DPDK App (example)
---------------------------
+# 7. Run testpmd
+
+```bash
+sudo env MACB_RXTX_TRACE=2 \
+./build/app/dpdk-testpmd \
+  -l 1-2 \
+  -n 1 \
+  --iova=pa \
+  --huge-dir=/dev/hugepages \
+  --socket-mem=64 \
+  --file-prefix=macb \
+  --no-telemetry \
+  --huge-unlink \
+  --vdev='net_macb0,dev=/dev/uio0,phy_lb=0,mac_lb=0,phy_mode=100fd' \
+  -- \
+  --interactive \
+  --nb-cores=1 \
+  --rxd=128 \
+  --txd=128 \
+  --total-num-mbufs=2048
+```
+
+---
+
+# 8. Run Matrix RX
+
+```bash
 sudo ./build/examples/dpdk-matrix-rx \
   --vdev=net_macb0,dev=/dev/uio0,phy_mode=auto \
-  -l 0-1 -n 1 --no-pci
+  -l 0-1 \
+  -n 1 \
+  --no-pci
+```
 
+---
 
-Quick Bring-Up Script
-----------------------
-sudo mkdir -p /dev/hugepages
-sudo mount -t hugetlbfs nodev /dev/hugepages
+# Troubleshooting
 
-sudo modprobe uio
-NAME=$(ls /sys/bus/platform/devices | grep -i eth)
-echo "uio" | sudo tee /sys/bus/platform/devices/$NAME/driver_override
-echo $NAME | sudo tee /sys/bus/platform/drivers/uio/bind
-echo 1 | sudo tee /sys/bus/platform/devices/$NAME/uio/uio0/enable
+## No `/dev/uio0`
 
-sudo insmod ~/dma-sync-helper/dma_sync_helper.ko
-[ ! -e /dev/dma_sync_eth0 ] && sudo mknod /dev/dma_sync_eth0 c 240 0
-sudo chmod 666 /dev/dma_sync_eth0
+Verify:
 
+```bash
+lsmod | grep uio
+```
 
-6. Run Matrix RX App
----------------------
-cd app/matrix-rx
-sudo ./matrix_rx \
-  --vdev=net_macb0,dev=/dev/uio0,phy_mode=auto \
-  -l 0-1 -n 1 --no-pci
+and:
 
-7. Run testpmd (MACB, DMA-sync, Pi5)
--------------------------------------
-sudo env MACB_RXTX_TRACE=2 ./build/app/dpdk-testpmd \
-  -l 1-2 -n 1 --iova=pa \
-  --huge-dir=/dev/hugepages --socket-mem=64 \
-  --file-prefix=macb3 --no-telemetry --huge-unlink \
-  --vdev='net_macb0,dev=/dev/uio0,phy_lb=0,mac_lb=0,phy_mode=100fd' \
-  -- --interactive --nb-cores=1 --rxd=128 --txd=128 --total-num-mbufs=2048
+```bash
+readlink /sys/bus/platform/devices/$NAME/driver
+```
 
+The device must be bound to:
 
-Notes
-------
-- After UIO bind, eth0 disappears from Linux networking — expected
-- Must repeat steps 2, 3, 4 after each reboot
-- DMA sync helper strongly recommended for correctness and stability
+```text
+uio_pdrv_genirq
+```
+
+---
+
+## Bind Hangs
+
+Before binding:
+
+```bash
+sudo ip link set eth0 down
+
+echo $NAME | sudo tee \
+    /sys/bus/platform/devices/$NAME/driver/unbind
+```
+
+Then monitor:
+
+```bash
+dmesg -w
+```
+
+and attempt the bind again.
+
+---
+
+## Why Not Use dpdk-devbind?
+
+This PMD is implemented as a DPDK vdev and accesses the RP1 Ethernet hardware through UIO.
+
+The RP1 Ethernet MAC is exposed as a platform device, not as a standalone PCI NIC that can be managed through the normal DPDK PCI binding workflow.
+
+Therefore:
+
+```bash
+dpdk-devbind.py
+```
+
+is not used for the MACB PMD.
+
