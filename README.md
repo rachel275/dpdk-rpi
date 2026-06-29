@@ -10,8 +10,6 @@ API documentation, and sample application information.
 For questions and usage discussions, subscribe to: users@dpdk.org
 Report bugs and issues to the development mailing list: dev@dpdk.org
 
-System Setup (Raspberry Pi 5 + RP1 MACB)
-
 This fork enables the Raspberry Pi 5 RP1 Ethernet controller (Cadence MACB/GEM) to run as a DPDK Poll Mode Driver (PMD) using a UIO-backed userspace driver.
 
 Unlike conventional DPDK NIC drivers, this PMD does **not** use PCI device discovery. Instead, the RP1 Ethernet platform device is detached from the Linux networking stack, rebound to `uio_pdrv_genirq`, and then accessed through `/dev/uio0` by the DPDK MACB vdev.
