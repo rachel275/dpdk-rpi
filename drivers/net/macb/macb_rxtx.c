@@ -72,7 +72,7 @@
 #endif
 #define MACB_DBG(fmt, ...) RTE_LOG(INFO, PMD, "macb: " fmt, ##__VA_ARGS__)
 
-#define MABC_RXTX_TRACE 2
+#define MACB_RXTX_TRACE 2
 
 /* ================= DMA sync wrappers (volatile-safe) ================= */
 static inline void sync_desc_to_dev(int fd, const volatile void *p, size_t len) {
@@ -391,7 +391,7 @@ uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
         /* Store the received packet */
         rx_pkts[nb++] = m;
         rxq->sw_ring[i] = NULL;
-        RTE_LOG(DEBUG, PMD, "RX[%u] frame received (len=%u)\n", i, len);
+        RTI("RX[%u] frame received (len=%u)\n", i, len);
 
         /* Re-arm descriptor with a fresh mbuf for the hardware */
         struct rte_mbuf *nm = rte_pktmbuf_alloc(rxq->mp);
@@ -420,6 +420,8 @@ uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
         rte_wmb();
         sync_desc_to_dev(rxq->sync_fd, (const void *)dv, sizeof(*dv));
         rte_io_wmb();
+
+        RTE_LOG(DEBUG, PMD, "RX[%u] descriptor re-armed with new mbuf\n", i);
     }
 
     return nb;
