@@ -376,6 +376,17 @@ dmesg -w
 
 and attempt the bind again.
 
+##
+```
+sudo python3 - <<'PY'
+from scapy.all import Ether, IP, UDP, sendp
+dst_mac = "02:00:00:00:00:01"
+pkt = Ether(dst=dst_mac, src="2c:cf:67:e4:d1:36") / IP(dst="192.0.2.1") / UDP(sport=1234, dport=5678) / b"hello"
+sendp(pkt, iface="eth0", count=5)
+print("sent")
+PY
+```
+
 ---
 
 ## Why Not Use dpdk-devbind?

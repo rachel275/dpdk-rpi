@@ -391,6 +391,7 @@ uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
         /* Store the received packet */
         rx_pkts[nb++] = m;
         rxq->sw_ring[i] = NULL;
+        RTE_LOG(DEBUG, PMD, "RX[%u] frame received (len=%u)\n", i, len);
 
         /* Re-arm descriptor with a fresh mbuf for the hardware */
         struct rte_mbuf *nm = rte_pktmbuf_alloc(rxq->mp);
