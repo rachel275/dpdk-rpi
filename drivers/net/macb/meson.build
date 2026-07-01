@@ -20,3 +20,11 @@ cflags += ['-Wno-unused-parameter', '-Wno-missing-field-initializers']
 install_headers = files('macb_hw.h', 'macb_logs.h')
 
 name = 'rte_net_macb'
+
+# --- optional test app (hugepage DMA R/W smoke test) ---
+executable(
+  'macb_dma_hugepage_test',
+  files('macb_test.c'),
+  dependencies: [dependency('libdpdk')],
+  install: false,
+)
