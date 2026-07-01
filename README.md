@@ -273,7 +273,7 @@ make
 Load:
 
 ```bash
-sudo insmod dma_sync_helper.ko
+sudo insmod dma_sync_helper.ko pdev_name=1f00100000.ethernet alias=eth0
 ```
 
 Check dmesg for the allocated device major number:
