@@ -2738,16 +2738,19 @@ static int macb_probe(struct rte_vdev_device *vdev)
     ad->port_id   = eth_dev->data->port_id;
     ad->edev = eth_dev;
 
-    MACB_DBG("probe args='%s'\n", args ? args : "(none)");
+    int rc = macb_uio_map(&ad->hw, uio);
+    rte_free(uio);
+    if (rc) {
+        rte_eth_dev_release_port(eth_dev);
+        return rc;
+    }
 
     uint32_t fw_rb = macb_readl(&ad->hw, MACB_RBQP);
-
     uint32_t fw_tb = macb_readl(&ad->hw, MACB_TBQP);
 
     macb_discover_rp1_q0_ptr_regs(ad, fw_rb, fw_tb);
-    int rc = macb_uio_map(&ad->hw, uio);
-    rte_free(uio);
-    if (rc) { rte_eth_dev_release_port(eth_dev); return rc; }
+	
+    MACB_DBG("probe args='%s'\n", args ? args : "(none)");
 
     eth_dev->dev_ops      = &macb_ops;
     eth_dev->rx_pkt_burst = macb_rx_burst;
