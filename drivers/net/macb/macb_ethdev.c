@@ -171,7 +171,7 @@ static int g_rx_ring_ro = 0;  /* devarg rx_ring_ro=1 (or env MACB_RX_RING_RO=1) 
 
 static int g_dma_selftest = 0; /* devarg dma_selftest=1 */
 static int g_rxq_rwtest = 0;
-static int g_rx_selftest = 1; /* devarg rx_selftest=1 */
+static int g_rx_selftest = 0; /* devarg rx_selftest=1 */
 
 /* Single helper that works across DPDK versions we care about */
 static inline rte_iova_t macb_mbuf_data_iova(const struct rte_mbuf *m)
