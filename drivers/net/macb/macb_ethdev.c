@@ -1898,22 +1898,28 @@ static int macb_rx_queue_setup(struct rte_eth_dev *dev, uint16_t qid,
     size_t ring_bytes_pg = macb_round_up_pages(ring_bytes);
     unsigned align       = (unsigned)macb_pagesize();
 
-    /* Your current code reserves a full 2MB page; keep it, but log true ring_bytes */
+    /* Reserve a per-queue DMA zone (use eth helper so names don't collide) */
     const struct rte_memzone *mz =
-        rte_memzone_reserve_aligned("macb_rx_ring_0",
-            RTE_PGSIZE_2M,
-            rte_socket_id(),
-            RTE_MEMZONE_2MB | RTE_MEMZONE_IOVA_CONTIG,
-            RTE_PGSIZE_2M);
+        rte_eth_dma_zone_reserve(dev, "rx_ring", qid,
+                                 ring_bytes,
+                                 RTE_CACHE_LINE_SIZE, rte_socket_id());
 
-    if (!mz) return -ENOMEM;
+    if (!mz) {
+        MACB_ERR("RX ring memzone reserve failed: qid=%u ring_bytes=%zu socket=%d\n",
+                 qid, ring_bytes, rte_socket_id());
+        return -ENOMEM;
+    }
 
     RTE_LOG(INFO, PMD,
         "RX ring: cap=0x%x stride=%u nb=%u ring_bytes=%zu (mz.len=%zu) VA=%p IOVA=0x%" PRIx64 "\n",
         rxq->hw_dma_cap, rxq->desc_stride, nb_desc, ring_bytes, mz->len, mz->addr, mz->iova);
 
     int rc = dma_map_region_relaxed(dev->device, mz->addr, BUS_IOVA(mz->iova), mz->len);
-    if (rc) { MACB_ERR("dma_map RX ring failed: %d\n", rc); return rc; }
+    if (rc) {
+        MACB_ERR("dma_map RX ring failed: %d (mz.addr=%p mz.iova=%" PRIx64 " mz.len=%zu)\n",
+                 rc, mz->addr, mz->iova, mz->len);
+        return rc;
+    }
 
     rxq->ring      = (uint8_t *)mz->addr;
     rxq->vring     = (volatile uint8_t *)mz->addr;
