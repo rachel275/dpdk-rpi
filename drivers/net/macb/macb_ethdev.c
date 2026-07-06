@@ -69,7 +69,11 @@ static int macb_dev_stop(struct rte_eth_dev *dev);
 
 static int macb_dev_configure(struct rte_eth_dev *dev)
 {
-    RTE_SET_USED(dev);
+    struct rte_eth_conf *c = &dev->data->dev_conf;
+    const uint64_t rx_ok = 0;
+    const uint64_t tx_ok = RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+    if (c->rxmode.offloads & ~rx_ok) c->rxmode.offloads &= rx_ok;
+    if (c->txmode.offloads & ~tx_ok) c->txmode.offloads &= tx_ok;
     return 0;
 }
 
