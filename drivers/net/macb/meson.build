@@ -10,6 +10,10 @@ sources = files(
   'macb_ethdev.c',
   'macb_rxtx.c',
   'macb_uio.c',
+  'macb_phy.c',
+  'macb_dma.c',
+  'macb_ring.c',
+  'macb_ctrl.c',
 )
 
 # Optional flags/includes
@@ -17,14 +21,6 @@ cflags += ['-Wno-unused-parameter', '-Wno-missing-field-initializers']
 # includes += include_directories('.')
 
 # Optional headers to install with the PMD
-install_headers = files('macb_hw.h', 'macb_logs.h')
+install_headers = files('macb_hw.h')
 
 name = 'rte_net_macb'
-
-# --- optional test app (hugepage DMA R/W smoke test) ---
-executable(
-  'macb_dma_hugepage_test',
-  files('macb_test.c'),
-  dependencies: [dependency('libdpdk')],
-  install: false,
-)

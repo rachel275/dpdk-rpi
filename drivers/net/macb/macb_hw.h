@@ -9,6 +9,12 @@
 #include <rte_ethdev.h>
 #include <rte_io.h>
 
+extern uint64_t g_bus_ofs;
+
+#define BUS_IOVA_DATA(x) \
+    ((rte_iova_t)((rte_iova_t)(x) + (rte_iova_t)g_bus_ofs))
+#define BUS_IOVA(x) BUS_IOVA_DATA((x))
+
 /* ===================== Tunables ===================== */
 #define MACB_NRXD   256
 #define MACB_NTXD   256
@@ -86,6 +92,12 @@
 #endif
 #ifndef GEM_DMACFG_RXBS
 # define GEM_DMACFG_RXBS(units64) (((uint32_t)(units64) & 0xFFu) << GEM_DMACFG_RXBS_SHIFT)
+#endif
+#ifndef GEM_DCFG5
+#define GEM_DCFG5   0x0290u   /* has TSU bit, ADDR64 bit live in DCFG regs on macb-family */
+#endif
+#ifndef GEM_DCFG10
+#define GEM_DCFG10  0x0298u
 #endif
 
 /* ================= NCR / NCFGR bits ================= */
@@ -225,7 +237,6 @@
 # define TX_LEN_MASK  0x00003FFFu   /* 14-bit length on GEM */
 #endif
 
-// #define MACB_PINNED_RX_LAYOUT_W1_ADDR_W0_STAT 0
 /* ================== Helper accessors ================== */
 static inline uint16_t macb_rx_len(uint32_t ctrl)
 {
@@ -396,7 +407,6 @@ struct macb_adapter {
     int       force_phy_lb;
     uint16_t  port_id;
     int       sync_fd;
-    int       dma_selftest;
     uint8_t   hw_dma_cap;
     uint32_t rp1_rbqb0_off; /* offset of queue0 RX base low */
     uint32_t rp1_tbqb0_off; /* offset of queue0 TX base low */
@@ -414,11 +424,6 @@ uint16_t macb_tx_burst(void *queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
 
 static inline void macb_writel(struct macb_hw *hw, uint32_t off, uint32_t v)
 {
-    if (off == 0x0010 || off == 0x0030) {
-        rte_log(RTE_LOG_INFO, RTE_LOGTYPE_USER1,
-            "macb: WREG off=%04x val=%08x caller=%p\n",
-            off, v, __builtin_return_address(0));
-    }
     rte_write32(v, (volatile void *)((uintptr_t)hw->regs + off));
 }
 
@@ -428,4 +433,3 @@ static inline uint32_t macb_readl(struct macb_hw *hw, uint32_t off) {
 
 /* RX helpers exposed across TUs */
 void macb_rx_init(struct macb_rxq *rxq);
-void macb_rx_probe_once(struct macb_rxq *rxq);
