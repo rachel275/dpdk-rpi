@@ -405,6 +405,30 @@ uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
         m_old->pkt_len  = len;
         m_old->port     = rxq->port_id;
 
+        /* Debug: one log line per received frame.
+         * buf   — buffer physical address (addr word masked to RX_ADDR_MASK)
+         * stat  — raw status/ctrl word (w1); inspect with the register map below
+         * len   — frame length extracted from stat[12:0]
+         * sof/eof — Start/End-of-Frame flags (stat bits 14/15); always 1 here
+         * bcast — broadcast frame      (stat bit 21, GEM rx_w_broadcast_frame)
+         * mhash — multicast hash match (stat bit 22, GEM rx_w_mult_hash_match)
+         * uhash — unicast hash match   (stat bit 23, GEM rx_w_uni_hash_match)
+         * sa    — specific-address register match nibble (stat bits [31:28],
+         *         maps to SA4/SA3/SA2/SA1 matching, GEM rx_w_add_match[4:1])
+         */
+        RTE_LOG(DEBUG, PMD,
+            "macb rx[%u]: buf=0x%08x stat=0x%08x len=%u "
+            "sof=%d eof=%d bcast=%d mhash=%d uhash=%d sa=0x%x\n",
+            (unsigned)i,
+            addr & RX_ADDR_MASK,
+            stat,
+            (unsigned)len,
+            has_sof, has_eof,
+            !!(stat & (1u << 21)),
+            !!(stat & (1u << 22)),
+            !!(stat & (1u << 23)),
+            (stat >> 28) & 0xFu);
+
         rx_pkts[nb++] = m_old;
 
         rxq->rx_tail = macb_ring_next(rxq->rx_tail, rxq->nb_desc);
