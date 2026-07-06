@@ -437,8 +437,6 @@ macb_tx_burst(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)
                                    : (uint16_t)(nb_desc - cons + prod);
     uint16_t free = (uint16_t)(nb_desc - 1 - used); /* one-slot guard */
 
-        nb_pkts, nb_desc, cons, prod, used, free);
-
     if (free == 0)
         return 0;
     if (nb_pkts > free)
