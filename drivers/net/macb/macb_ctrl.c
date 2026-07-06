@@ -5,7 +5,7 @@
 #include <string.h>
 #include <rte_log.h>
 #include <rte_io.h>
-#include <rte_device.h>
+#include <rte_dev.h>
 
 #include "macb_hw.h"
 #include "macb_ctrl.h"
