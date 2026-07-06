@@ -297,9 +297,6 @@ static int macb_link_update(struct rte_eth_dev *dev, int wait)
     return 0;
 }
 
-
-
-
 static int macb_dev_start(struct rte_eth_dev *dev)
 {
     struct macb_adapter *ad = dev->data->dev_private;
@@ -333,7 +330,6 @@ static int macb_dev_start(struct rte_eth_dev *dev)
     return 0;
 }
 
-
 static int macb_dev_stop(struct rte_eth_dev *dev)
 {
     struct macb_adapter *ad = dev->data->dev_private;
@@ -346,6 +342,7 @@ static int macb_dev_stop(struct rte_eth_dev *dev)
     ad->txq[0].sync_fd = -1;
     return 0;
 }
+
 static int macb_dev_close(struct rte_eth_dev *dev)
 {
     struct macb_adapter *ad = dev->data->dev_private;
@@ -393,6 +390,7 @@ static int macb_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
     stats->oerrors  = ad->sw.tx_errs;
     return 0;
 }
+
 static int macb_stats_reset(struct rte_eth_dev *dev)
 {
     struct macb_adapter *ad = dev->data->dev_private;
@@ -410,6 +408,7 @@ static int parse_dev_arg_cb(const char *key, const char *value, void *opaque)
     strcpy(*out, value);
     return 0;
 }
+
 static int parse_bool_arg_cb(const char *key, const char *val, void *extra)
 {
     RTE_SET_USED(key); int *out = (int *)extra; if (!val) return -EINVAL;
@@ -426,6 +425,7 @@ static int parse_int_arg_cb(const char *key, const char *val, void *extra)
     if (end == val || *end || v < -1 || v > 31) return -EINVAL;
     *(int *)extra = (int)v; return 0;
 }
+
 static int parse_u64_arg_cb(const char *key, const char *val, void *extra)
 {
     RTE_SET_USED(key); if (!val) return -EINVAL; char *end = NULL;
