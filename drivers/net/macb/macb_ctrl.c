@@ -192,7 +192,7 @@ int macb_hw_configure_dma(struct macb_adapter *ad, struct macb_rxq *rxq)
 {
     /* DMA-map mempool segments if available */
     if (rxq->mp) {
-        (void)macb_map_mempool(ad->device, rxq->mp);
+        (void)macb_map_mempool(ad->edev->device, rxq->mp);
         rte_io_wmb();
     }
 
