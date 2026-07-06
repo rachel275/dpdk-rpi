@@ -507,7 +507,6 @@ static int macb_probe(struct rte_vdev_device *vdev)
     memset(ad, 0, sizeof(*ad));
     ad->hw.uio_fd = -1;
     ad->sync_fd   = -1;
-    ad->hw_dma_cap = macb_hw_probe_dma_cap(ad);
     ad->port_id   = eth_dev->data->port_id;
     ad->edev = eth_dev;
 
@@ -517,6 +516,9 @@ static int macb_probe(struct rte_vdev_device *vdev)
         rte_eth_dev_release_port(eth_dev);
         return rc;
     }
+
+    /* Probe DMA capability only after the register window is mapped */
+    ad->hw_dma_cap = macb_hw_probe_dma_cap(ad);
 
     uint32_t fw_rb = macb_readl(&ad->hw, MACB_RBQP);
     uint32_t fw_tb = macb_readl(&ad->hw, MACB_TBQP);
