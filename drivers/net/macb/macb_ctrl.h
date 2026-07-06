@@ -9,6 +9,8 @@
 #define MACB_CTRL_H
 
 #include <stdint.h>
+#include <rte_dev.h>
+#include <rte_mempool.h>
 
 struct macb_adapter;
 struct macb_rxq;
@@ -109,5 +111,12 @@ void macb_hw_discover_rp1_q0_ptr_regs(struct macb_adapter *ad,
  * Issues TSTART kick. Logs NCR readback for verification.
  */
 void macb_hw_enable_rxtx(struct macb_adapter *ad);
+
+/**
+ * macb_map_mempool - DMA-map all mempool memory segments
+ * @rdev: DPDK device (for rte_dev_dma_map)
+ * @mp: mempool whose segments to map
+ */
+int macb_map_mempool(struct rte_device *rdev, struct rte_mempool *mp);
 
 #endif /* MACB_CTRL_H */
