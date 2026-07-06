@@ -384,8 +384,7 @@ uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
             break;
         }
 
-        /* Compute VA/room from the OLD mbuf (the packet we are returning/dropping) */
-        uint8_t *va   = (uint8_t *)m_old->buf_addr + RTE_PKTMBUF_HEADROOM;
+        /* Compute room from the OLD mbuf for clamping */
         size_t room   = m_old->buf_len - RTE_PKTMBUF_HEADROOM;
 
         /* Clamp */

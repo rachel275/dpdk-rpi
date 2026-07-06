@@ -12,6 +12,10 @@
 #include <rte_log.h>
 #include <rte_io.h>
 
+#ifndef RTE_LOGTYPE_PMD
+#define RTE_LOGTYPE_PMD RTE_LOGTYPE_USER1
+#endif
+
 #include "dma_sync_uapi.h"
 
 /*

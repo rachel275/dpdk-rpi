@@ -433,3 +433,5 @@ static inline uint32_t macb_readl(struct macb_hw *hw, uint32_t off) {
 
 /* RX helpers exposed across TUs */
 void macb_rx_init(struct macb_rxq *rxq);
+void macb_rx_publish_desc(struct macb_rxq *rxq, volatile struct macb_desc *dv,
+                          uint64_t bus_addr, uint32_t wrap);
