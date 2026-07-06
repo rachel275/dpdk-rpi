@@ -2,7 +2,7 @@
 
 #include <errno.h>
 #include <stdint.h>
-#include <rte_delay.h>
+#include <rte_cycles.h>
 #include <rte_io.h>
 #include <rte_log.h>
 
