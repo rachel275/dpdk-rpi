@@ -1,12 +1,13 @@
 // macb_ring.c — Ring allocation and initialization for Cadence GEM
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <string.h>
 #include <rte_common.h>
 #include <rte_dev.h>
-#include <rte_eth_ctrl.h>
 #include <rte_ethdev.h>
+#include <ethdev_driver.h>
 #include <rte_io.h>
 #include <rte_log.h>
 #include <rte_malloc.h>

@@ -150,10 +150,10 @@ static int macb_tx_queue_start(struct rte_eth_dev *dev, uint16_t qid){
     for (uint16_t i = 0; i < nb; i++) {
         uint32_t wrap = (i == nb - 1) ? TX_WRAP : 0;
 
-	volatile uint32_t *w = (volatile uint32_t *)macb_desc_at(txq->ring, txq->hw_dma_cap, i);
-	memset((void *)w, 0, txq->desc_stride);
-	w[1] = TX_USED | wrap;
-	sync_desc_to_dev(txq->sync_fd, (void *)(uintptr_t)w, txq->desc_stride);
+        volatile uint32_t *w = (volatile uint32_t *)macb_desc_at(txq->ring, txq->hw_dma_cap, i);
+        memset((void *)(uintptr_t)w, 0, txq->desc_stride);
+        w[1] = TX_USED | wrap;
+        sync_desc_to_dev(txq->sync_fd, (void *)(uintptr_t)w, txq->desc_stride);
 
     }
     sync_desc_to_dev(txq->sync_fd, txq->ring, ring_bytes);
