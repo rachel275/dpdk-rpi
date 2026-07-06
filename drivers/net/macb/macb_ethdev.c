@@ -64,11 +64,14 @@ static enum macb_phy_mode g_phy_mode = PHY_MODE_AUTO;
 /* MDIO and PHY functions moved to macb_phy.c */
 
 /* -------- Ethdev ops decl -------- */
-static int macb_dev_configure(struct rte_eth_dev *dev);
 static int macb_dev_start(struct rte_eth_dev *dev);
 static int macb_dev_stop(struct rte_eth_dev *dev);
 
-
+static int macb_dev_configure(struct rte_eth_dev *dev)
+{
+    RTE_SET_USED(dev);
+    return 0;
+}
 
 static int macb_rx_queue_setup(struct rte_eth_dev *dev, uint16_t qid,
                                uint16_t nb_desc, unsigned int so,
@@ -162,7 +165,7 @@ static int macb_tx_queue_stop(struct rte_eth_dev *dev, uint16_t qid){
 }
 
 /* -------- Promisc / link -------- */
-int macb_promiscuous_enable(struct rte_eth_dev *dev)
+static int macb_promiscuous_enable(struct rte_eth_dev *dev)
 {
     struct macb_adapter *ad = dev->data->dev_private;
     uint32_t n = macb_readl(&ad->hw, MACB_NCFGR);
@@ -174,7 +177,7 @@ int macb_promiscuous_enable(struct rte_eth_dev *dev)
     return 0;
 }
 
-int macb_promiscuous_disable(struct rte_eth_dev *dev)
+static int macb_promiscuous_disable(struct rte_eth_dev *dev)
 {
     struct macb_adapter *ad = dev->data->dev_private;
     uint32_t n = macb_readl(&ad->hw, MACB_NCFGR);
@@ -465,6 +468,25 @@ static int macb_parse_devargs(const char *args, char **uio_out)
     *uio_out = uio;
     return 0;
 }
+
+static const struct eth_dev_ops macb_ops = {
+    .dev_configure        = macb_dev_configure,
+    .dev_start            = macb_dev_start,
+    .dev_stop             = macb_dev_stop,
+    .dev_close            = macb_dev_close,
+    .rx_queue_setup       = macb_rx_queue_setup,
+    .tx_queue_setup       = macb_tx_queue_setup,
+    .rx_queue_start       = macb_rx_queue_start,
+    .rx_queue_stop        = macb_rx_queue_stop,
+    .tx_queue_start       = macb_tx_queue_start,
+    .tx_queue_stop        = macb_tx_queue_stop,
+    .link_update          = macb_link_update,
+    .promiscuous_enable   = macb_promiscuous_enable,
+    .promiscuous_disable  = macb_promiscuous_disable,
+    .stats_get            = macb_stats_get,
+    .stats_reset          = macb_stats_reset,
+    .mac_addr_set         = macb_mac_addr_set,
+};
 
 static int macb_probe(struct rte_vdev_device *vdev)
 {

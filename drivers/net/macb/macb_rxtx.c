@@ -286,8 +286,7 @@ macb_rx_rearm_slot_swap(struct macb_rxq *rxq, uint16_t i, struct rte_mbuf **out_
 /* Fresh RX init that *always* clears any extension words present in the ring,
  * based on stride (not on cap flags), so w2..w5 can never contain poison.
  */
-void
-macb_rx_init(struct macb_rxq *rxq)
+void macb_rx_init(struct macb_rxq *rxq)
 {
     const uint16_t nb = rxq->nb_desc;
     const unsigned cap = rxq->hw_dma_cap;
@@ -341,8 +340,7 @@ macb_rx_init(struct macb_rxq *rxq)
     rte_io_wmb();
 }
 
-uint16_t
-macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
+uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 {
     struct macb_rxq *rxq = (struct macb_rxq *)queue;
     uint16_t nb = 0;
