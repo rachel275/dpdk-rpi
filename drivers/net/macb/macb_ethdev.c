@@ -67,6 +67,39 @@ static enum macb_phy_mode g_phy_mode = PHY_MODE_AUTO;
 static int macb_dev_start(struct rte_eth_dev *dev);
 static int macb_dev_stop(struct rte_eth_dev *dev);
 
+static int macb_dev_infos_get(struct rte_eth_dev *dev,
+                              struct rte_eth_dev_info *info)
+{
+    struct macb_adapter *ad = dev->data->dev_private;
+
+    info->driver_name        = dev->device->driver->name;
+    info->max_rx_queues      = 1;
+    info->max_tx_queues      = 1;
+    info->min_rx_bufsize     = 64;
+    info->max_rx_pktlen      = 10240;   /* GEM supports jumbo up to 10240 bytes */
+    info->max_mac_addrs      = 1;
+    info->rx_queue_offload_capa = 0;
+    info->tx_queue_offload_capa = 0;
+    info->rx_offload_capa    = 0;
+    info->tx_offload_capa    = RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+
+    /* Descriptor limits: GEM ring must have at least 2 entries */
+    info->rx_desc_lim.nb_max   = MACB_NRXD;
+    info->rx_desc_lim.nb_min   = 2;
+    info->rx_desc_lim.nb_align = 1;
+    info->tx_desc_lim.nb_max   = MACB_NTXD;
+    info->tx_desc_lim.nb_min   = 2;
+    info->tx_desc_lim.nb_align = 1;
+
+    /* Speed capabilities derived from hw_dma_cap / always-present GEM features */
+    info->speed_capa = RTE_ETH_LINK_SPEED_10M_HD | RTE_ETH_LINK_SPEED_10M  |
+                       RTE_ETH_LINK_SPEED_100M_HD | RTE_ETH_LINK_SPEED_100M |
+                       RTE_ETH_LINK_SPEED_1G;
+
+    (void)ad;
+    return 0;
+}
+
 static int macb_dev_configure(struct rte_eth_dev *dev)
 {
     struct rte_eth_conf *c = &dev->data->dev_conf;
@@ -475,6 +508,7 @@ static int macb_parse_devargs(const char *args, char **uio_out)
 
 static const struct eth_dev_ops macb_ops = {
     .dev_configure        = macb_dev_configure,
+    .dev_infos_get        = macb_dev_infos_get,
     .dev_start            = macb_dev_start,
     .dev_stop             = macb_dev_stop,
     .dev_close            = macb_dev_close,
