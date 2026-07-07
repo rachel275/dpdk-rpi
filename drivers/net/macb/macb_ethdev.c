@@ -27,10 +27,6 @@
 #include <ethdev_vdev.h>
 #include <rte_bus_vdev.h>
 
-#ifndef RTE_LOGTYPE_PMD
-#define RTE_LOGTYPE_PMD RTE_LOGTYPE_USER1
-#endif
-
 #include "macb_hw.h"         /* NIC regs/desc + struct macb_adapter/rxq/txq */
 #include "dma_sync_uapi.h"   /* userspace DMA sync helper ioctl API */
 #include "macb_dma_sync.h"
@@ -39,8 +35,8 @@
 #include "macb_ring.h"       /* Ring allocation/init functions */
 #include "macb_ctrl.h"       /* Hardware control/configuration functions */
 
-#define MACB_DBG(fmt, ...) RTE_LOG(INFO,  PMD, "macb: " fmt, ##__VA_ARGS__)
-#define MACB_ERR(fmt, ...) RTE_LOG(ERR,   PMD, "macb: " fmt, ##__VA_ARGS__)
+#define MACB_DBG(fmt, ...) RTE_LOG(INFO,  MACB, "macb: " fmt, ##__VA_ARGS__)
+#define MACB_ERR(fmt, ...) RTE_LOG(ERR,   MACB, "macb: " fmt, ##__VA_ARGS__)
 
 /* -------- Runtime knobs / KV args -------- */
 uint64_t g_bus_ofs = 0;
@@ -263,7 +259,7 @@ static int macb_link_update(struct rte_eth_dev *dev, int wait)
     uint16_t bmsr = macb_mdio_read_c22(ad, phy, MII_BMSR);
 
     if (!(bmsr & BMSR_LSTATUS))
-        RTE_LOG(INFO, PMD, "macb: link down\n");
+        RTE_LOG(INFO, MACB, "macb: link down\n");
 
     if (bmsr & BMSR_LSTATUS) {
         l.link_status = RTE_ETH_LINK_UP;
@@ -575,7 +571,7 @@ static int macb_probe(struct rte_vdev_device *vdev)
 
     eth_dev->data->nb_rx_queues = 1; eth_dev->data->nb_tx_queues = 1;
     rte_eth_dev_probing_finish(eth_dev);
-    RTE_LOG(INFO, PMD, "macb: probe done; initial bus_ofs=0x%llx\n",
+    RTE_LOG(INFO, MACB, "macb: probe done; initial bus_ofs=0x%llx\n",
             (unsigned long long)g_bus_ofs);
     return 0;
 }

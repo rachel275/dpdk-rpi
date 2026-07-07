@@ -149,10 +149,26 @@ extern uint64_t g_bus_ofs;
 #endif
 /* ========= Logging helpers (maps to DPDK logging) ========= */
 #include <rte_log.h>
+
+/* Dynamic logtype registered once (in macb_uio.c) via RTE_LOG_REGISTER_DEFAULT().
+ * This extern + alias makes RTE_LOG(level, MACB, ...) resolve to that same
+ * registered id from every translation unit in the driver.
+ *
+ * NOTE: the old fallback here used to be
+ *   #ifndef RTE_LOGTYPE_PMD
+ *   #define RTE_LOGTYPE_PMD RTE_LOGTYPE_USER1
+ *   #endif
+ * Modern DPDK no longer defines a static RTE_LOGTYPE_PMD, so that #ifndef was
+ * always true and silently rerouted every "PMD"-tagged log call in this
+ * driver to RTE_LOGTYPE_USER1 -- which is why raising the "pmd" log level
+ * had no effect on this driver's debug output. Don't reintroduce it.
+ */
+extern int macb_logtype;
+#define RTE_LOGTYPE_MACB macb_logtype
+
 #ifndef MACB_LOG
-/* Use the PMD logtype; default logtype is already set by build flags. */
 #define MACB_LOG(level, fmt, ...) \
-    RTE_LOG(level, RTE_LOGTYPE_PMD, "macb: " fmt "\n", ##__VA_ARGS__)
+    RTE_LOG(level, MACB, "macb: " fmt "\n", ##__VA_ARGS__)
 #endif
 
 #ifndef DEBUG

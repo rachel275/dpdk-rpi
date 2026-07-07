@@ -8,10 +8,6 @@
 #include "macb_hw.h"
 #include "macb_dma_sync.h"
 
-#ifndef RTE_LOGTYPE_PMD
-#define RTE_LOGTYPE_PMD RTE_LOGTYPE_USER1
-#endif
-
 /* Canonical RX descriptor layout: w0 = addr word, w1 = status/ctrl word */
 #define RX_PICK_ADDR(w0, w1) (w0)
 #define RX_PICK_STAT(w0, w1) (w1)
@@ -416,7 +412,7 @@ uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
          * sa    — specific-address register match nibble (stat bits [31:28],
          *         maps to SA4/SA3/SA2/SA1 matching, GEM rx_w_add_match[4:1])
          */
-        RTE_LOG(DEBUG, PMD,
+        RTE_LOG(DEBUG, MACB,
             "macb rx[%u]: buf=0x%08x stat=0x%08x len=%u "
             "sof=%d eof=%d bcast=%d mhash=%d uhash=%d sa=0x%x\n",
             (unsigned)i,
