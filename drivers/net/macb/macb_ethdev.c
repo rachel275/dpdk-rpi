@@ -356,6 +356,11 @@ static int macb_dev_start(struct rte_eth_dev *dev)
     /* Enable DMA */
     macb_hw_enable_rxtx(ad);
 
+    RTE_LOG(INFO, PMD,
+    "rx_burst=%p tx_burst=%p\n",
+    dev->rx_pkt_burst,
+    dev->tx_pkt_burst);
+
     return 0;
 }
 
@@ -571,6 +576,10 @@ static int macb_probe(struct rte_vdev_device *vdev)
 
     eth_dev->data->nb_rx_queues = 1; eth_dev->data->nb_tx_queues = 1;
     rte_eth_dev_probing_finish(eth_dev);
+    RTE_LOG(INFO, PMD,
+        "rx_pkt_burst=%p macb_rx_burst=%p\n",
+        eth_dev->rx_pkt_burst,
+        macb_rx_burst);
     RTE_LOG(INFO, MACB, "macb: probe done; initial bus_ofs=0x%llx\n",
             (unsigned long long)g_bus_ofs);
     return 0;

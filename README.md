@@ -327,7 +327,7 @@ sudo env MACB_RXTX_TRACE=2 \
 # 8. Run Matrix RX
 
 ```bash
-sudo ./build/examples/dpdk-matrix-rx \
+sudo ./build/app/dpdk-matrix-rx \
   --vdev=net_macb0,dev=/dev/uio0,phy_mode=auto \
   -l 0-1 \
   -n 1 \

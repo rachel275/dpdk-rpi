@@ -338,6 +338,7 @@ void macb_rx_init(struct macb_rxq *rxq)
 
 uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
 {
+    fprintf(stderr, "ENTER RX\n");
     struct macb_rxq *rxq = (struct macb_rxq *)queue;
     uint16_t nb = 0;
 
@@ -412,7 +413,7 @@ uint16_t macb_rx_burst(void *queue, struct rte_mbuf **rx_pkts, uint16_t nb_pkts)
          * sa    — specific-address register match nibble (stat bits [31:28],
          *         maps to SA4/SA3/SA2/SA1 matching, GEM rx_w_add_match[4:1])
          */
-        RTE_LOG(DEBUG, MACB,
+        RTE_LOG(INFO, MACB,
             "macb rx[%u]: buf=0x%08x stat=0x%08x len=%u "
             "sof=%d eof=%d bcast=%d mhash=%d uhash=%d sa=0x%x\n",
             (unsigned)i,
