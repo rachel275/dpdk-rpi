@@ -306,6 +306,7 @@ sudo env MACB_RXTX_TRACE=2 \
 ./build/app/dpdk-testpmd \
   -l 1-2 \
   -n 1 \
+  --log-level=pmd:debug \
   --iova=pa \
   --huge-dir=/dev/hugepages \
   --socket-mem=64 \
