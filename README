@@ -1,11 +1,288 @@
-DPDK is a set of libraries and drivers for fast packet processing.
-It supports many processor architectures and both FreeBSD and Linux.
+# DPDK for Raspberry Pi 5 RP1 Ethernet
 
-The DPDK uses the Open Source BSD-3-Clause license for the core libraries
-and drivers. The kernel components are GPL-2.0 licensed.
+Experimental DPDK support for the **Raspberry Pi 5 RP1 Ethernet controller**, based on the Cadence MACB/GEM Ethernet MAC.
 
-Please check the doc directory for release notes,
-API documentation, and sample application information.
+This repository adds a custom DPDK Poll Mode Driver (PMD) that allows the Raspberry Pi 5's onboard Ethernet controller to be accessed directly from userspace using DPDK.
 
-For questions and usage discussions, subscribe to: users@dpdk.org
-Report bugs and issues to the development mailing list: dev@dpdk.org
+> **Status:** Research prototype / work in progress.
+
+## Overview
+
+The RP1 Ethernet controller is normally managed by the Linux `macb` driver.
+
+This project instead:
+
+```text
+RP1 Ethernet
+    ↓
+uio_pdrv_genirq
+    ↓
+/dev/uio0
+    ↓
+DPDK MACB PMD
+    ↓
+DPDK application
+```
+
+The driver directly manages:
+
+* RX/TX descriptor rings
+* packet DMA
+* DPDK mbufs
+* MAC configuration
+* PHY/MDIO configuration
+* link state
+* loopback and debugging
+
+The RP1 Ethernet device is a Linux **platform device**, so the PMD is exposed to DPDK as a `vdev` rather than through normal PCI discovery.
+
+## Supported Hardware
+
+Currently developed and tested for:
+
+* Raspberry Pi 5
+* RP1 I/O controller
+* onboard Cadence MACB/GEM Ethernet controller
+* 64-bit Linux
+
+Other MACB/GEM devices are not currently guaranteed to work.
+
+## Build
+
+Install dependencies:
+
+```bash
+sudo apt update
+
+sudo apt install -y \
+    build-essential \
+    meson \
+    ninja-build \
+    pkg-config \
+    libnuma-dev \
+    python3-pyelftools
+```
+
+Clone the repository:
+
+```bash
+git clone https://github.com/rachel275/dpdk-rpi.git
+cd dpdk-rpi
+```
+
+Checkout the RP1 development branch:
+
+```bash
+git checkout rp1-macb-debug
+```
+
+Build:
+
+```bash
+meson setup build
+ninja -C build
+```
+
+## Hugepages
+
+Allocate hugepages:
+
+```bash
+echo 1024 | sudo tee /proc/sys/vm/nr_hugepages
+
+sudo mkdir -p /dev/hugepages
+sudo mount -t hugetlbfs nodev /dev/hugepages
+```
+
+Check:
+
+```bash
+grep Huge /proc/meminfo
+```
+
+## Bind RP1 Ethernet to UIO
+
+> **Warning:** This removes `eth0` from the Linux networking stack.
+> Do not do this over an SSH connection that uses `eth0`.
+
+Find the RP1 Ethernet platform device:
+
+```bash
+NAME=$(basename "$(readlink /sys/class/net/eth0/device)")
+echo "$NAME"
+```
+
+Bring the interface down:
+
+```bash
+sudo ip link set eth0 down
+```
+
+Unbind the Linux MACB driver:
+
+```bash
+echo "$NAME" | sudo tee \
+    /sys/bus/platform/devices/$NAME/driver/unbind
+```
+
+Load UIO:
+
+```bash
+sudo modprobe uio
+sudo modprobe uio_pdrv_genirq
+```
+
+Bind the device:
+
+```bash
+echo uio_pdrv_genirq | sudo tee \
+    /sys/bus/platform/devices/$NAME/driver_override
+
+echo "$NAME" | sudo tee \
+    /sys/bus/platform/drivers/uio_pdrv_genirq/bind
+```
+
+Check that the device exists:
+
+```bash
+ls -l /dev/uio*
+```
+
+Typically this will create:
+
+```text
+/dev/uio0
+```
+
+## Run with `testpmd`
+
+Example:
+
+```bash
+sudo env MACB_RXTX_TRACE=2 \
+./build/app/dpdk-testpmd \
+    -l 1-2 \
+    -n 1 \
+    --iova=pa \
+    --huge-dir=/dev/hugepages \
+    --vdev='net_macb0,dev=/dev/uio0,phy_mode=auto' \
+    -- \
+    --interactive \
+    --nb-cores=1 \
+    --rxd=128 \
+    --txd=128
+```
+
+Inside `testpmd`:
+
+```text
+show port info all
+show port stats all
+start
+stop
+```
+
+## PMD Options
+
+Example:
+
+```bash
+--vdev='net_macb0,dev=/dev/uio0,phy_addr=1,phy_lb=0,mac_lb=0,phy_mode=auto'
+```
+
+Important options:
+
+| Option     | Description                      |
+| ---------- | -------------------------------- |
+| `dev`      | UIO device, e.g. `/dev/uio0`     |
+| `phy_addr` | PHY MDIO address                 |
+| `phy_lb`   | Enable PHY loopback              |
+| `mac_lb`   | Enable MAC loopback              |
+| `phy_mode` | PHY speed/duplex mode            |
+| `bus_ofs`  | CPU-to-device DMA address offset |
+
+Supported PHY modes include:
+
+```text
+auto
+10hd
+10fd
+100hd
+100fd
+```
+
+## DMA Cache Synchronisation
+
+Some RP1 DMA configurations require explicit CPU/DMA cache synchronisation.
+
+A companion kernel helper is available here:
+
+https://github.com/rachel275/dma-sync-helper
+
+When used, the PMD can be pointed at the helper with:
+
+```bash
+export MACB_DMA_SYNC_NODE=/dev/dma_sync_eth0
+```
+
+## Example Application
+
+The repository also includes a small RX test application:
+
+```bash
+meson setup build -Dexamples=matrix-rx
+ninja -C build
+```
+
+Run:
+
+```bash
+sudo ./build/examples/dpdk-matrix-rx \
+    --vdev=net_macb0,dev=/dev/uio0,phy_mode=auto \
+    -l 0-1 \
+    -n 1 \
+    --no-pci
+```
+
+## Repository Structure
+
+The main driver implementation is under:
+
+```text
+drivers/net/macb/
+```
+
+Key files include:
+
+```text
+macb_ethdev.c    Device setup, PHY and DPDK ethdev integration
+macb_rxtx.c      RX/TX datapath
+macb_uio.c       UIO register mapping
+macb_hw.h        Hardware registers and descriptor definitions
+```
+
+For more detailed implementation and debugging notes, see:
+
+```text
+repo_walkthrough.md
+matrix_test.md
+```
+
+## Development Status
+
+The driver is still experimental.
+
+Current development focuses on:
+
+* reliable RX/TX
+* DMA addressing
+* cache coherency
+* descriptor ownership
+* PHY configuration
+* performance optimisation
+
+## Upstream
+
+This repository is based on the upstream DPDK project:
+
+https://github.com/DPDK/dpdk
